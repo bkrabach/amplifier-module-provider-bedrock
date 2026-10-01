@@ -193,3 +193,19 @@ MIT
 ## Contributing
 
 See the main Amplifier repository for contribution guidelines.
+
+### Bounded output and completion waits
+
+Healthy requests have no default elapsed/read deadline. Explicit `timeout`
+configuration remains supported, with a five-second connection/pool bound.
+Cancellation still propagates. Slow model work must not be canceled by a default
+deadline.
+
+`auto_continue` defaults to `true`. Set it to `false` in configuration or pass
+`request_options={"auto_continue": False}` to `complete()` to return a truncated
+response without extra generation calls. Partial content, finish reason and usage
+remain available; callers must not commit a truncated result as a complete
+summary. The optional capability is `completion:auto_continue:v1`. This option is
+consumed locally, never sent to the service, and does not impose a time limit.
+
+`raw: true` enables full redacted request capture on `llm:request.raw`, independently of debug logging. It defaults to false; the previous debug/raw_debug behavior remains supported.
