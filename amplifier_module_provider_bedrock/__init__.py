@@ -10,7 +10,10 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import Mapping
+from threading import Event
 from typing import Any
+from ._catalog import CatalogFilters, catalog_schema, fetch_catalog, model_info
 
 from amplifier_core import ConfigField, ModelInfo, ModuleCoordinator, ProviderInfo
 from amplifier_core.utils import redact_secrets
@@ -120,10 +123,13 @@ class BedrockProvider:
         """
         self.config = config or {}
         self.coordinator = coordinator
+        self._model_filters = CatalogFilters.parse(self.config.get("model_filters", {
+            "active_only": True, "latest_per_family": True,
+        }))
 
         # AWS configuration
         aws_region = self.config.get("aws_region") or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-        aws_profile = self.config.get("aws_profile")
+        aws_profile = self.config.get("aws_profile") or os.environ.get("AWS_PROFILE") or os.environ.get("AWS_DEFAULT_PROFILE")
         aws_access_key = self.config.get("aws_access_key") or os.environ.get("AWS_ACCESS_KEY_ID")
         aws_secret_key = self.config.get("aws_secret_key") or os.environ.get("AWS_SECRET_ACCESS_KEY")
         aws_session_token = self.config.get("aws_session_token") or os.environ.get("AWS_SESSION_TOKEN")
@@ -132,6 +138,8 @@ class BedrockProvider:
         # AWS Bedrock Inference Profile mapping based on official documentation
         # https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html
         self.use_cross_region_inference = self.config.get("use_cross_region_inference", True)  # Enabled by default
+        if type(self.use_cross_region_inference) is not bool:
+            raise ValueError("use_cross_region_inference must be a boolean")
         self.aws_region = aws_region
         self.inference_profile_mapping = [
             # Ordered by pattern length (descending) to ensure more specific patterns match first
@@ -174,6 +182,16 @@ class BedrockProvider:
             self.config.get("timeout"), connect=5.0, pool=5.0
         )
         self.client = AsyncAnthropicBedrock(**client_kwargs)
+        # Bind listing to the same resolved AWS selectors as inference, rather
+        # than re-reading mutable provider config or assuming Anthropic access.
+        self.aws_region = self.client.aws_region
+        self._catalog_session_kwargs = {
+            "region_name": self.client.aws_region,
+            "profile_name": self.client.aws_profile,
+            "aws_access_key_id": self.client.aws_access_key,
+            "aws_secret_access_key": self.client.aws_secret_key,
+            "aws_session_token": self.client.aws_session_token,
+        }
 
         # Model configuration
         self.default_model = self.config.get("default_model", "anthropic.claude-sonnet-4-5-20250929-v1:0")
@@ -260,38 +278,42 @@ class BedrockProvider:
             ],
         )
 
-    async def list_models(self) -> list[ModelInfo]:
-        """
-        List available Claude models on AWS Bedrock.
+    def get_model_list_info(self) -> dict[str, Any]:
+        """Local selector metadata, without any AWS requests."""
+        return {
+            "version": 1, "source": "provider-api",
+            "filters_keyword": "filters", "filters_schema": catalog_schema(),
+            "default_filters": self._model_filters.as_dict(),
+            "unfiltered": {}, "override": "replace",
+            "region": self.aws_region,
+            "invocation_route": "inference-profiles" if self.use_cross_region_inference else "on-demand",
+            "entitlement_verified": False,
+        }
 
-        Returns hardcoded list since Bedrock doesn't provide dynamic model discovery.
+    async def list_models(
+        self, *, filters: Mapping[str, object] | None = None
+    ) -> list[ModelInfo]:
+        """Discover Claude targets on this AWS region and invocation route.
+
+        {} disables recommendation filters, not adapter/route compatibility.
+        No cached/static fallback. Zero limits mean unknown, not a guessed limit.
+        AWS listing is not proof that InvokeModel is authorized for each target.
         """
-        return [
-            ModelInfo(
-                id="anthropic.claude-sonnet-4-5-20250929-v1:0",
-                display_name="Claude Sonnet 4.5",
-                context_window=200000,
-                max_output_tokens=16000,
-                capabilities=["tools", "vision", "thinking", "streaming"],
-                defaults={"temperature": 0.7, "max_tokens": 4096},
-            ),
-            ModelInfo(
-                id="anthropic.claude-opus-4-1-20250805-v1:0",
-                display_name="Claude Opus 4.1",
-                context_window=200000,
-                max_output_tokens=32000,
-                capabilities=["tools", "vision", "thinking", "streaming"],
-                defaults={"temperature": 0.7, "max_tokens": 4096},
-            ),
-            ModelInfo(
-                id="anthropic.claude-haiku-4-5-20251001-v1:0",
-                display_name="Claude Haiku 4.5",
-                context_window=200000,
-                max_output_tokens=8192,
-                capabilities=["tools", "vision", "streaming", "fast"],
-                defaults={"temperature": 0.7, "max_tokens": 4096},
-            ),
-        ]
+        policy = self._model_filters if filters is None else CatalogFilters.parse(filters)
+        cancelled = Event()
+        task = asyncio.create_task(asyncio.to_thread(
+            fetch_catalog, dict(self._catalog_session_kwargs),
+            self.use_cross_region_inference, cancelled,
+        ))
+        try:
+            entries = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled.set()
+            # The owned worker closes its client after its bounded in-flight
+            # request settles. Retrieve a late failure without logging secrets.
+            task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+            raise
+        return [model_info(entry) for entry in policy.select(entries)]
 
     def _get_inference_profile_prefix(self, region: str) -> str | None:
         """
@@ -324,6 +346,13 @@ class BedrockProvider:
         Returns:
             Model ID with inference profile prefix if applicable (e.g., "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
         """
+        # Already-qualified AWS ARNs (including application profiles) are exact
+        # invocation targets. Do not prefix them with a guessed regional route.
+        if model_id.startswith("arn:"):
+            return model_id
+        if not model_id.startswith("anthropic."):
+            return model_id  # Exact service profile ID, including future routes.
+
         # Skip if cross-region inference is disabled
         if not self.use_cross_region_inference:
             return model_id

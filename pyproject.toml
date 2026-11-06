@@ -10,7 +10,8 @@ authors = [
 ]
 dependencies = [
     "anthropic[bedrock]>=0.25.0",
-    "amplifier-core>=0.1.0",
+    "boto3>=1.40.0",
+    "amplifier-core>=2.0.1",
 ]
 
 [project.entry-points."amplifier.modules"]

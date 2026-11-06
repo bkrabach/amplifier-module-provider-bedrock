@@ -20,6 +20,7 @@ source = { editable = "." }
 dependencies = [
     { name = "amplifier-core" },
     { name = "anthropic", extra = ["bedrock"] },
+    { name = "boto3" },
 ]
 
 [package.dev-dependencies]
@@ -32,6 +33,7 @@ dev = [
 requires-dist = [
     { name = "amplifier-core", git = "https://github.com/microsoft/amplifier-core?branch=main" },
     { name = "anthropic", extras = ["bedrock"], specifier = ">=0.25.0" },
+    { name = "boto3", specifier = ">=1.40.0" },
 ]
 
 [package.metadata.requires-dev]

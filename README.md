@@ -32,11 +32,43 @@ amplifier run "What is 2+2?"
 
 ## Supported Models
 
-- `anthropic.claude-sonnet-4-5-20250929-v1:0` - Claude Sonnet 4.5 (recommended, default)
-- `anthropic.claude-opus-4-1-20250805-v1:0` - Claude Opus 4.1 (most capable)
-- `anthropic.claude-haiku-4-5-20251001-v1:0` - Claude Haiku 4.5 (fastest, cheapest)
+`await provider.list_models()` discovers actual AWS targets for the resolved
+region and selected invocation route. It does not use the direct Anthropic
+catalog or invent regional prefixes:
 
-> **Note:** Model availability varies by AWS region. See [AWS Bedrock Models](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the complete list.
+- Cross-region enabled (default): all pages of `ListInferenceProfiles`, keeping
+  profiles whose targets are Claude models. System profile IDs are byte-exact;
+  application profile ARNs retain each distinct configured route.
+- Cross-region disabled: `ListFoundationModels` with the supported native
+  Anthropic/TEXT/ON_DEMAND filters, keeping text-input Claude models.
+
+Default recommendation filters are `active_only: true` and
+`latest_per_family: true`: latest numeric Opus/Sonnet/Haiku/Fable version per
+system route, alias before a matching snapshot, newest snapshot otherwise.
+Distinct application profiles and unrecognized Claude naming schemes are
+retained conservatively rather than guessed away. Different tiers are not ranked
+by intelligence or price.
+
+`get_model_list_info()` reports `source: "provider-api"`, region, invocation route,
+and the full v1 filter schema. Listing is **not proof of InvokeModel entitlement**.
+AWS does not publish token limits or all capabilities in these catalog responses;
+returned limits are `0` (unknown), with no invented capability tags.
+
+`config.model_filters` is snapshotted at construction. `filters=None` uses it;
+an explicit mapping replaces it. `filters={}` disables all recommendation filters
+(not Claude/route compatibility), `filters={"include":[]}` returns none, and
+`filters={"include":["*SONNET*"],"exclude":["global.*"]}` uses case-insensitive,
+OS-independent globs. Exclusion wins and original returned IDs are unchanged.
+Common `hide_dated` suppresses ISO YYYY-MM-DD alias snapshots; Bedrock's compact
+dates and version suffixes are handled by `latest_per_family`. Neither policy
+silently applies to explicit custom/unfiltered requests.
+
+Discovery failures raise sanitized typed errors, never a cached/static list.
+Control-plane connect/read waits are bounded at 5/10 seconds, without retries.
+Cancellation stops subsequent pages; an already-running boto3 request settles
+within its transport bounds and closes its client. No inference call is made.
+Existing exact selections and the configured inference default are not changed
+or restricted by recommendations.
 
 ## Features
 
@@ -89,6 +121,8 @@ See [AWS CLI Configuration](https://docs.aws.amazon.com/cli/latest/userguide/cli
 Your AWS credentials need:
 - `bedrock:InvokeModel`
 - `bedrock:InvokeModelWithResponseStream`
+- `bedrock:ListInferenceProfiles` for cross-region catalog discovery, or
+  `bedrock:ListFoundationModels` for direct on-demand catalog discovery
 
 See [AWS Bedrock IAM](https://docs.aws.amazon.com/bedrock/latest/userguide/security-iam.html).
 
@@ -104,7 +138,9 @@ The provider automatically prefixes model IDs based on your region:
 | `eu-*` | `eu.` | `eu.anthropic.claude-sonnet-4-5-20250929-v1:0` |
 | `ap-*` | `apac.` | `apac.anthropic.claude-sonnet-4-5-20250929-v1:0` |
 
-You only specify the base model ID—the prefix is automatic.
+Legacy explicit base-model selections still receive this automatic prefix.
+Catalog selections instead use actual returned profile IDs/ARNs unchanged; an
+existing inference profile prefix or ARN is never prefixed again.
 
 ## Differences from Anthropic Provider
 
