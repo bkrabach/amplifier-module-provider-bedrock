@@ -209,14 +209,19 @@ def test_invalid_invocation_route_is_not_silently_truthy():
 @pytest.mark.asyncio
 async def test_hidden_exact_inference_uses_native_sdk_route_and_parameters():
     import json
-    import httpx
-    from anthropic import AsyncAnthropicBedrock
+    import importlib
+    from anthropic import AsyncAnthropicBedrock, DefaultAsyncHttpxClient
     from amplifier_core.message_models import ChatRequest, Message
 
+    transport_module = "httpx2" if any(
+        cls.__module__.startswith("httpx2")
+        for cls in DefaultAsyncHttpxClient.__mro__
+    ) else "httpx"
+    http = importlib.import_module(transport_module)
     seen = []
     def handle(request):
         seen.append(request)
-        return httpx.Response(200, json={
+        return http.Response(200, json={
             "id": "fixture", "type": "message", "role": "assistant", "model": S45,
             "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
             "usage": {"input_tokens": 1, "output_tokens": 1},
@@ -225,7 +230,7 @@ async def test_hidden_exact_inference_uses_native_sdk_route_and_parameters():
     await p.client.close()
     p.client = AsyncAnthropicBedrock(
         aws_region="us-east-1", aws_access_key="fixture-key", aws_secret_key="fixture-secret",
-        max_retries=0, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        max_retries=0, http_client=http.AsyncClient(transport=http.MockTransport(handle)),
     )
     try:
         response = await p.complete(ChatRequest(
