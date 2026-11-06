@@ -175,8 +175,7 @@ async def test_config_snapshot_fresh_info_bound_connection(monkeypatch):
 async def test_cancellation_propagates_and_closes_owned_client(monkeypatch):
     entered, release, closed = Event(), Event(), Event()
     client = MagicMock()
-    client.__enter__.return_value = client
-    client.__exit__.side_effect = lambda *args: closed.set()
+    client.close.side_effect = lambda *args: closed.set()
     def page(**kwargs):
         entered.set()
         assert release.wait(5)

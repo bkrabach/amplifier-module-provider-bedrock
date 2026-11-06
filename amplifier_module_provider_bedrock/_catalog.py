@@ -175,13 +175,16 @@ def fetch_catalog(session_kwargs, cross_region, cancelled: Event):
     """
     try:
         session = boto3.Session(**session_kwargs)
-        with session.client("bedrock", config=Config(
+        client = session.client("bedrock", config=Config(
             connect_timeout=5, read_timeout=10, retries={"total_max_attempts": 1},
             ignore_configured_endpoint_urls=True,
-        )) as client:
+        ))
+        try:
             if cancelled.is_set():
                 return []
             return read_catalog(client, cross_region, cancelled)
+        finally:
+            client.close()
     except (NoCredentialsError, PartialCredentialsError):
         raise errors.AuthenticationError("AWS credentials unavailable for Bedrock model listing", provider="bedrock") from None
     except ClientError as exc:

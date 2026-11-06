@@ -357,8 +357,8 @@ class BedrockProvider:
         # invocation targets. Do not prefix them with a guessed regional route.
         if model_id.startswith("arn:"):
             return model_id
-        if not model_id.startswith("anthropic."):
-            return model_id  # Exact service profile ID, including future routes.
+        if ".anthropic.claude-" in model_id:
+            return model_id  # Exact system profile ID, including future routes.
 
         # Skip if cross-region inference is disabled
         if not self.use_cross_region_inference:
