@@ -207,6 +207,18 @@ def test_invalid_invocation_route_is_not_silently_truthy():
 
 
 @pytest.mark.asyncio
+async def test_custom_endpoint_does_not_claim_unrelated_aws_catalog(monkeypatch):
+    p = provider()
+    p.client.base_url = "https://custom.example.invalid/"
+    called = MagicMock()
+    monkeypatch.setattr("amplifier_module_provider_bedrock.fetch_catalog", called)
+    with pytest.raises(errors.LLMError, match="custom Bedrock runtime endpoint"):
+        await p.list_models()
+    called.assert_not_called()
+    await p.client.close()
+
+
+@pytest.mark.asyncio
 async def test_hidden_exact_inference_uses_native_sdk_route_and_parameters():
     import json
     import importlib

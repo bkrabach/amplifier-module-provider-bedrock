@@ -64,6 +64,9 @@ dates and version suffixes are handled by `latest_per_family`. Neither policy
 silently applies to explicit custom/unfiltered requests.
 
 Discovery failures raise sanitized typed errors, never a cached/static list.
+Custom runtime endpoints are not treated as AWS inventory: listing fails
+explicitly rather than enumerating an unrelated standard endpoint. Control-plane
+requests ignore ambient endpoint URL overrides and use the selected AWS region.
 Control-plane connect/read waits are bounded at 5/10 seconds, without retries.
 Cancellation stops subsequent pages; an already-running boto3 request settles
 within its transport bounds and closes its client. No inference call is made.

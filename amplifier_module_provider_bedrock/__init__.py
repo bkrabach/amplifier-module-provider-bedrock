@@ -300,6 +300,13 @@ class BedrockProvider:
         AWS listing is not proof that InvokeModel is authorized for each target.
         """
         policy = self._model_filters if filters is None else CatalogFilters.parse(filters)
+        expected_runtime = f"https://bedrock-runtime.{self.aws_region}.amazonaws.com"
+        if str(self.client.base_url).rstrip("/") != expected_runtime:
+            from amplifier_core.llm_errors import LLMError
+            raise LLMError(
+                "Model listing is unavailable for a custom Bedrock runtime endpoint",
+                provider=self.name,
+            )
         cancelled = Event()
         task = asyncio.create_task(asyncio.to_thread(
             fetch_catalog, dict(self._catalog_session_kwargs),
