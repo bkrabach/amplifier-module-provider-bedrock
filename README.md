@@ -67,9 +67,15 @@ Discovery failures raise sanitized typed errors, never a cached/static list.
 Custom runtime endpoints are not treated as AWS inventory: listing fails
 explicitly rather than enumerating an unrelated standard endpoint. Control-plane
 requests ignore ambient endpoint URL overrides and use the selected AWS region.
-Control-plane connect/read waits are bounded at 5/10 seconds, without retries.
-Cancellation stops subsequent pages; an already-running boto3 request settles
-within its transport bounds and closes its client. No inference call is made.
+Control-plane request connect/read waits are bounded at 5/10 seconds, without
+retries. These bounds do not cover credential resolution (for example,
+`credential_process` or an MFA prompt) and are not a total elapsed deadline.
+Cancellation returns to the caller and stops subsequent pages, but cannot
+interrupt synchronous boto3 work. Its worker thread may linger until credential
+lookup or an in-flight request returns. Any created client closes when that work
+settles, not necessarily when cancellation returns. No inference call is made.
+Local missing/invalid profiles and expired or missing SSO tokens produce
+non-retryable configuration/authentication errors, not a retryable outage.
 Existing exact selections and the configured inference default are not changed
 or restricted by recommendations.
 
@@ -118,6 +124,10 @@ The provider supports all standard AWS authentication:
 - IAM roles (EC2, ECS, Lambda)
 
 See [AWS CLI Configuration](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html).
+
+Explicit `aws_profile` configuration wins. Otherwise `AWS_DEFAULT_PROFILE`
+takes precedence over `AWS_PROFILE`, matching botocore. The resolved selection
+is shared by inference and discovery.
 
 ### Required Permissions
 
@@ -216,7 +226,7 @@ amplifier run "test query"
 
 ```bash
 # Install dev dependencies
-uv sync --extra dev
+uv sync --locked --dev
 
 # Run tests
 uv run pytest
@@ -238,7 +248,14 @@ See the main Amplifier repository for contribution guidelines.
 Healthy requests have no default elapsed/read deadline. Explicit `timeout`
 configuration remains supported, with a five-second connection/pool bound.
 Cancellation still propagates. Slow model work must not be canceled by a default
-deadline.
+deadline. Transport phase bounds do not bound credential lookup or a total
+elapsed request. A stalled read may wait until the caller cancels or an explicit
+timeout expires; this change does not introduce a default generation deadline.
+
+An explicit nonempty `model=` keyword overrides `ChatRequest.model`; both take
+precedence over the configured default. `request_options` may supply the same
+override, with explicit keywords taking precedence over the mapping. Listing
+filters do not restrict exact inference selection.
 
 `auto_continue` defaults to `true`. Set it to `false` in configuration or pass
 `request_options={"auto_continue": False}` to `complete()` to return a truncated
@@ -247,4 +264,8 @@ remain available; callers must not commit a truncated result as a complete
 summary. The optional capability is `completion:auto_continue:v1`. This option is
 consumed locally, never sent to the service, and does not impose a time limit.
 
-`raw: true` enables full redacted request capture on `llm:request.raw`, independently of debug logging. It defaults to false; the previous debug/raw_debug behavior remains supported.
+`raw: true` enables opt-in request capture on `llm:request.raw`, independently of
+debug logging. Redaction is best-effort and key-based: known sensitive keys are
+redacted, but secrets embedded in message text or other strings are not. Treat
+captured payloads as sensitive. It defaults to false; previous debug/raw_debug
+behavior remains supported and may emit unredacted payloads.

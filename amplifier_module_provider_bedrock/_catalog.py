@@ -11,7 +11,11 @@ from threading import Event
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError, PartialCredentialsError
+from botocore.exceptions import (
+    BotoCoreError, ClientError, ConfigParseError, InvalidConfigError,
+    NoCredentialsError, PartialCredentialsError, ProfileNotFound,
+    SSOTokenLoadError, UnauthorizedSSOTokenError,
+)
 from amplifier_core import ModelInfo
 from amplifier_core import llm_errors as errors
 
@@ -170,8 +174,10 @@ def read_catalog(client, cross_region, cancelled):
 def fetch_catalog(session_kwargs, cross_region, cancelled: Event):
     """Own/close this control client. Cancellation stops subsequent pages.
 
-    boto3's in-flight synchronous HTTP request cannot be interrupted, but its
-    connect/read waits are bounded and no partial catalog is returned.
+    The request's connect/read waits are bounded, not credential resolution
+    (for example credential_process or MFA). Cancellation cannot interrupt that
+    synchronous work; the thread may linger until it returns. An existing client
+    is closed in finally when work settles, not necessarily when the caller cancels.
     """
     try:
         session = boto3.Session(**session_kwargs)
@@ -187,6 +193,16 @@ def fetch_catalog(session_kwargs, cross_region, cancelled: Event):
             client.close()
     except (NoCredentialsError, PartialCredentialsError):
         raise errors.AuthenticationError("AWS credentials unavailable for Bedrock model listing", provider="bedrock") from None
+    except (UnauthorizedSSOTokenError, SSOTokenLoadError):
+        raise errors.AuthenticationError(
+            "AWS SSO credentials unavailable for Bedrock model listing; sign in again",
+            provider="bedrock", retryable=False,
+        ) from None
+    except (ProfileNotFound, ConfigParseError, InvalidConfigError):
+        raise errors.ConfigurationError(
+            "AWS profile or configuration invalid for Bedrock model listing",
+            provider="bedrock", retryable=False,
+        ) from None
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "")
         error = {

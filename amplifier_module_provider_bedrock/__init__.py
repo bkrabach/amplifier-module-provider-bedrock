@@ -129,7 +129,9 @@ class BedrockProvider:
 
         # AWS configuration
         aws_region = self.config.get("aws_region") or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-        aws_profile = self.config.get("aws_profile") or os.environ.get("AWS_PROFILE") or os.environ.get("AWS_DEFAULT_PROFILE")
+        # Match botocore's environment precedence while binding the same profile
+        # to inference and discovery. Explicit provider configuration wins.
+        aws_profile = self.config.get("aws_profile") or os.environ.get("AWS_DEFAULT_PROFILE") or os.environ.get("AWS_PROFILE")
         aws_access_key = self.config.get("aws_access_key") or os.environ.get("AWS_ACCESS_KEY_ID")
         aws_secret_key = self.config.get("aws_secret_key") or os.environ.get("AWS_SECRET_ACCESS_KEY")
         aws_session_token = self.config.get("aws_session_token") or os.environ.get("AWS_SESSION_TOKEN")
@@ -316,8 +318,9 @@ class BedrockProvider:
             entries = await asyncio.shield(task)
         except asyncio.CancelledError:
             cancelled.set()
-            # The owned worker closes its client after its bounded in-flight
-            # request settles. Retrieve a late failure without logging secrets.
+            # Credential lookup and synchronous requests cannot be interrupted.
+            # The worker may linger; it closes any existing client when it settles.
+            # Retrieve a late failure without logging secrets.
             task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
             raise
         return [model_info(entry) for entry in policy.select(entries)]
@@ -535,7 +538,7 @@ class BedrockProvider:
         logger.info(f"[PROVIDER] Final message count for API: {len(all_messages)}")
 
         # Prepare request parameters
-        base_model = request.model or kwargs.get("model", self.default_model)
+        base_model = kwargs.get("model") or request.model or self.default_model
         model_with_profile = self._apply_inference_profile(base_model)
         
         params = {
@@ -571,6 +574,9 @@ class BedrockProvider:
                     "provider": "bedrock",
                     "model": params["model"],
                     "messages_count": len(all_messages),
+                    # Retain legacy nested keys for existing event hooks.
+                    "message_count": len(all_messages),
+                    "has_system": bool(system),
                 },
             }
             if self.raw:
