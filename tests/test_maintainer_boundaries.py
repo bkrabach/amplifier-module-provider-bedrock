@@ -1,5 +1,6 @@
 """Focused maintainer-review boundaries; no AWS requests or credentials needed."""
 import asyncio
+import importlib
 import json
 from pathlib import Path
 from threading import Event
@@ -12,7 +13,6 @@ from botocore.exceptions import (
     ConfigParseError, EndpointConnectionError, InvalidConfigError,
     ProfileNotFound, SSOTokenLoadError, UnauthorizedSSOTokenError,
 )
-import httpx
 import pytest
 from amplifier_core import llm_errors as errors
 from amplifier_core.message_models import ChatRequest, Message
@@ -98,6 +98,11 @@ async def test_profile_precedence_matches_botocore_and_binds_catalog(monkeypatch
     ({"model": "anthropic.claude-keyword-v1:0", "request_options": {"model": "anthropic.claude-mapped-v1:0"}}, "anthropic.claude-keyword-v1:0"),
 ])
 async def test_model_override_reaches_native_sdk_and_keeps_request_fields(monkeypatch, options, selected):
+    transport_module = "httpx2" if any(
+        cls.__module__.startswith("httpx2")
+        for cls in anthropic.DefaultAsyncHttpxClient.__mro__
+    ) else "httpx"
+    httpx = importlib.import_module(transport_module)
     p = provider(use_cross_region_inference=False, model_filters={"include": []})
     original = p.client
     seen = []

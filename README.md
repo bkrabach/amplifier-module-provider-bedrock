@@ -257,6 +257,13 @@ precedence over the configured default. `request_options` may supply the same
 override, with explicit keywords taking precedence over the mapping. Listing
 filters do not restrict exact inference selection.
 
+The adapter preserves its selected `temperature` in the AWS Claude Messages
+JSON body via the SDK's documented `extra_body` extension. This works with older
+SDKs and newer SDKs that no longer accept a named `temperature` keyword; it does
+not remove, clamp, or retry without that value. The target AWS model still
+determines which inference parameters it supports. Service rejection remains
+an error, not permission to silently drop an explicitly selected parameter.
+
 `auto_continue` defaults to `true`. Set it to `false` in configuration or pass
 `request_options={"auto_continue": False}` to `complete()` to return a truncated
 response without extra generation calls. Partial content, finish reason and usage

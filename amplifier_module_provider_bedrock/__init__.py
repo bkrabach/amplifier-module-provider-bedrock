@@ -615,10 +615,18 @@ class BedrockProvider:
 
         start_time = time.time()
 
+        # Temperature remains an AWS Claude Messages wire parameter, but newer
+        # Anthropic SDKs removed its named create() keyword. The documented
+        # extra_body extension preserves it across old/new SDKs without retrying
+        # a call or silently dropping the user's value. Keep event payloads in
+        # their existing wire-shaped form above.
+        sdk_params = dict(params)
+        sdk_params["extra_body"] = {"temperature": sdk_params.pop("temperature")}
+
         # Call Bedrock API
         try:
             response = await asyncio.wait_for(
-                self.client.messages.create(**params, timeout=self.client.timeout),
+                self.client.messages.create(**sdk_params, timeout=self.client.timeout),
                 timeout=self.timeout,
             )
             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -692,7 +700,7 @@ class BedrockProvider:
                 ]
                 
                 # Make continuation call with same params but updated messages
-                continuation_params = dict(params)
+                continuation_params = dict(sdk_params)
                 continuation_params["messages"] = continuation_messages
                 
                 try:

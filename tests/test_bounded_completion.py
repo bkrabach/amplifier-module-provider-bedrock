@@ -37,7 +37,7 @@ async def test_bounded_call_uses_one_request_and_truthful_stop_reason():
     p.client.messages.create.assert_awaited_once()
     params = p.client.messages.create.call_args.kwargs
     assert params["model"] == "us.explicit-model"
-    assert params["temperature"] == 0 and params["max_tokens"] == 100
+    assert params["extra_body"]["temperature"] == 0 and params["max_tokens"] == 100
     assert "auto_continue" not in params and "request_options" not in params
     assert result.finish_reason == "length"
     assert result.usage.input_tokens == 120 and result.usage.cache_write_tokens == 5
