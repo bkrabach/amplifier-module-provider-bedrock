@@ -83,7 +83,7 @@ async def test_continuation_uses_same_temperature_model_and_account():
     try:
         result = await p.complete(ChatRequest(model=MODEL, messages=[Message(role="user", content="fixture")],
                                              max_output_tokens=17, temperature=.25))
-        assert len(seen) == 2 and result.finish_reason == "stop"
+        assert len(seen) == 2 and result.finish_reason == "end_turn"
         for req in seen:
             payload = json.loads(req.content)
             assert payload["temperature"] == .25 and payload["max_tokens"] == 17
